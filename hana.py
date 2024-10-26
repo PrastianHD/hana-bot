@@ -2,6 +2,7 @@ import json
 import requests
 from web3 import Web3
 from colorama import Fore, Style
+import time
 
 # Configuration
 RPC_URL = "https://mainnet.base.org"
@@ -46,8 +47,7 @@ def send_transaction_and_post(account):
         "http": proxy,
         "https": proxy
     }
-    # Log proxy connection
-    #print(f"Proxy terhubung: {proxy}")
+
     # Get nonce for the transaction
     nonce = web3.eth.get_transaction_count(from_address)
 
@@ -75,6 +75,7 @@ def send_transaction_and_post(account):
         
         web3.eth.wait_for_transaction_receipt(tx_hash)
         print(Fore.GREEN + f"Transaction {nonce} sent from {short_from_address} with hash: {tx_hash.hex()}")
+        time.sleep(2)
 
         # Post transaction hash to GraphQL endpoint
         post_tx_hash(bearer_token, tx_hash.hex(), proxies)
@@ -102,14 +103,14 @@ def post_tx_hash(bearer_token, tx_hash, proxies):
         if response.status_code != 200:
             print(f"Error: {response.status_code} - {response.text}")
         else:
-            print(f"GraphQL response for {tx_hash}: {response.json()}")
+            print(f"GraphQL response : {response.json()}")
     except Exception as e:
         print(f"Error posting txHash {tx_hash}: {e}")
 
 # Prompt user for the number of transactions
-num_transactions = int(input(Fore.YELLOW + "Enter the number of transactions to be executed: " + Style.RESET_ALL))
+num_transactions = int(input(Fore.GREEN + "Enter the number of transactions to be executed per account: " + Style.RESET_ALL))
 
-# Run transactions for all accounts
-for account in accounts:
-    for _ in range(num_transactions):
+# Execute transactions in a round-robin pattern
+for i in range(num_transactions):
+    for account in accounts:
         send_transaction_and_post(account)
