@@ -21,15 +21,11 @@ pip install web3 colorama logging
 ```
 ### Deposit ETH
 ```bash
-python3 hana.py
+python3 deposit.py
 ```
 ### Grow Multi Accunt
 ```bash
 python3 growmulti.py
-```
-### Grow Single Account
-```bash
-python3 grow.py
 ```
 
 source code from : https://github.com/dpangestuw/HANA
