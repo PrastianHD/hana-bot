@@ -3,156 +3,149 @@ import json
 import time
 import logging
 from colorama import Fore, Style
+from headers import get_grow_headers  # Import headers dari grow_headers.py
 
 # Konfigurasi logging
 logging.basicConfig(filename='hana_auto_grow.log', level=logging.INFO)
 
+# Konstanta
+GRAPHQL_URL = "https://hanafuda-backend-app-520478841386.us-central1.run.app/graphql"
+ACCOUNT_FILE = "account.json"
+CYCLE_DELAY = 60 * 60  # 40 menit dalam detik
+
 def refresh_access_token(refresh_token):
-    api_key = "AIzaSyDipzN0VRfTPnMGhQ5PSzO27Cxm3DohJGY"  # Ganti dengan API Key Anda
-    url = f"https://securetoken.googleapis.com/v1/token?key={api_key}"
-
-    headers = {
-        "Content-Type": "application/json",
-    }
-
+    """Memperbarui access token menggunakan refresh token."""
+    API_KEY = "AIzaSyDipzN0VRfTPnMGhQ5PSzO27Cxm3DohJGY"
+    url = f"https://securetoken.googleapis.com/v1/token?key={API_KEY}"
+    
     body = json.dumps({
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
     })
 
-    response = requests.post(url, headers=headers, data=body)
-
-    if response.status_code != 200:
-        error_response = response.json()
-        raise Exception(f"Failed to refresh access token: {error_response['error']}")
-
-    return response.json()
+    try:
+        response = requests.post(url, headers={"Content-Type": "application/json"}, data=body)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error refreshing access token: {e}")
+        raise Exception("Failed to refresh access token.")
 
 def print_intro():
-    print(Fore.CYAN + Style.BRIGHT + """Auto Grow for HANA Network Multi Account""" + Style.RESET_ALL)
+    """Menampilkan teks intro."""
+    print(Fore.CYAN + Style.BRIGHT + "Auto Grow for HANA Network Multi Account" + Style.RESET_ALL)
 
-def print_success(message):
-    print(Fore.GREEN + Style.BRIGHT + message + Style.RESET_ALL)
-
-def print_error(message):
-    print(Fore.RED + Style.BRIGHT + message + Style.RESET_ALL)
-
-def load_accounts_from_file():
+def load_accounts():
+    """Memuat akun dari file JSON."""
     try:
-        with open("account.json", "r") as account_file:
-            return json.load(account_file)
+        with open(ACCOUNT_FILE, "r") as file:
+            return json.load(file)
     except FileNotFoundError:
-        logging.error("File 'account.json' not found.")
-        print(Fore.RED + Style.BRIGHT + "File 'account.json' tidak ditemukan." + Style.RESET_ALL)
+        logging.error(f"File '{ACCOUNT_FILE}' not found.")
+        print(Fore.RED + Style.BRIGHT + f"File '{ACCOUNT_FILE}' tidak ditemukan." + Style.RESET_ALL)
         exit()
+
+def check_top_leaderboard(headers, session):
+    """Mengambil data leaderboard."""
+    query_top_leaderboard = {
+        "query": "query getTopStatusSnapshots($offset: Int, $limit: Int) { getTopStatusSnapshots(offset: $offset, limit: $limit) { id depositCount totalPoint lastDepositedAt user { id sub name iconPath } inviter { id name } } }",
+        "variables": {"offset": 0, "limit": 100},
+        "operationName": "getTopStatusSnapshots"
+    }
+    
+    session.post(GRAPHQL_URL, headers=headers, json=query_top_leaderboard)
+
+def execute_grow_action(headers, session):
+    """Melakukan Grow Action dan mengambil totalValue dari respons."""
+    mutation_execute_grow = {
+        "query": "mutation ExecuteGrowAction($withAll: Boolean) { executeGrowAction(withAll: $withAll) { baseValue leveragedValue totalValue multiplyRate } }",
+        "variables": {"withAll": True},
+        "operationName": "ExecuteGrowAction"
+    }
+
+    response = session.post(GRAPHQL_URL, headers=headers, json=mutation_execute_grow)
+
+    if response.status_code == 200:
+        grow_data = response.json().get("data", {}).get("executeGrowAction", {})
+        total_value = grow_data.get("totalValue", 0)
+
+        print(Fore.GREEN + Style.BRIGHT + f"✅ Draw Successful! Total Points Earned: {total_value}" + Style.RESET_ALL)
+        logging.info(f"Grow action success, earned points: {total_value}")
+
+        return total_value
+    else:
+        print(Fore.RED + "❌ Grow action failed!" + Style.RESET_ALL)
+        logging.error(f"Grow action failed: {response.text}")
+        return 0
+
+def get_current_user_status(headers, session):
+    """Mengambil data terbaru user setelah Grow Action."""
+    query_current_user = {
+        "query": "query CurrentUserStatus { currentUser { depositCount totalPoint evmAddress { userId address } inviter { id name } } }",
+        "operationName": "CurrentUserStatus"
+    }
+
+    response = session.post(GRAPHQL_URL, headers=headers, json=query_current_user)
+
+    if response.status_code == 200:
+        user_data = response.json().get("data", {}).get("currentUser", {})
+        deposit_count = user_data.get("depositCount", 0)
+        total_point = user_data.get("totalPoint", 0)
+
+        print(Fore.CYAN + Style.BRIGHT + f"📊 User Stats: Deposit Count: {deposit_count} | Total Points: {total_point}" + Style.RESET_ALL)
+        logging.info(f"User stats updated: Deposit Count: {deposit_count}, Total Points: {total_point}")
+
+        return deposit_count, total_point
+    else:
+        print(Fore.RED + "❌ Failed to get user status!" + Style.RESET_ALL)
+        logging.error(f"Failed to get user status: {response.text}")
+        return 0, 0
 
 def main():
-    accounts = load_accounts_from_file()
-
-    print(Fore.BLUE + Style.BRIGHT + "Masukkan Jumlah Grow: " + Style.RESET_ALL)
-    try:
-        num_iterations = int(input())
-        if num_iterations <= 0:
-            raise ValueError("The number of iterations must be a positive integer.")
-    except ValueError as e:
-        logging.error(f"Invalid input: {e}")
-        print(Fore.RED + Style.BRIGHT + "Input tidak valid." + Style.RESET_ALL)
-        exit()
+    """Fungsi utama untuk menjalankan program."""
+    print_intro()
+    accounts = load_accounts()
 
     while True:
         for account in accounts:
-            refresh_token = account['refresh_token']  # Accessing refresh_token from the account dictionary
-            proxy = account.get('proxy', None)
+            refresh_token = account.get("refresh_token")
+            proxy = account.get("proxy")
 
             try:
-                # Configure the proxy for the requests session
+                # Setup session dengan proxy jika tersedia
                 session = requests.Session()
                 if proxy:
-                    session.proxies = {
-                        "http": proxy,
-                        "https": proxy,
-                    }
+                    session.proxies = {"http": proxy, "https": proxy}
                     logging.info(f"Connected to proxy: {proxy}")
-                    print_success(f"Proxy terhubung: {proxy}")
 
+                # Perbarui token akses
                 token_data = refresh_access_token(refresh_token)
                 access_token = token_data["access_token"]
 
-                url = "https://hanafuda-backend-app-520478841386.us-central1.run.app/graphql"
-                headers = {
-                    "Authorization": f"Bearer {access_token}",
-                    "Content-Type": "application/json",
-                }
+                # Ambil headers dari grow_headers.py
+                headers = get_grow_headers(access_token)
 
-                for i in range(num_iterations):
-                    query_get_top_status_snapshots = """
-                    query getTopStatusSnapshots($offset: Int, $limit: Int) {
-                    getTopStatusSnapshots(offset: $offset, limit: $limit) {
-                        user {
-                        id
-                        name
-                        }
-                    }
-                    }
-                    """
-                    variables_top_status = {"offset": 0, "limit": 100}
-                    session.post(url, headers=headers, json={"query": query_get_top_status_snapshots, "variables": variables_top_status})
+                print(Fore.CYAN + Style.BRIGHT + f"\nExecuting Grow for account: {account.get('privateKey', 'Unknown')[:6]}..." + Style.RESET_ALL)
 
-                    mutation_issue_grow_action = """
-                    mutation issueGrowAction {
-                    issueGrowAction
-                    }
-                    """
-                    session.post(url, headers=headers, json={"query": mutation_issue_grow_action})
+                # 1️⃣ Cek Top Leaderboard
+                check_top_leaderboard(headers, session)
 
-                    mutation_commit_grow_action = """
-                    mutation commitGrowAction {
-                    commitGrowAction
-                    }
-                    """
-                    session.post(url, headers=headers, json={"query": mutation_commit_grow_action})
+                # 2️⃣ Jalankan Grow Action
+                total_value = execute_grow_action(headers, session)
 
-                    query_current_user = """
-                    query CurrentUser {
-                    currentUser {
-                        name
-                        totalPoint
-                    }
-                    }
-                    """
-                    response_current_user = session.post(url, headers=headers, json={"query": query_current_user})
+                # 3️⃣ Ambil Data User Terbaru
+                deposit_count, total_point = get_current_user_status(headers, session)
 
-                    if response_current_user.status_code == 200:
-                        current_user_data = response_current_user.json()
-                        user_name = current_user_data['data']['currentUser']['name']
-                        initial_total_point = current_user_data['data']['currentUser']['totalPoint']
-
-                        mutation_spin = """
-                        mutation commitSpinAction {
-                        commitSpinAction
-                        }
-                        """
-                        response_spin = session.post(url, headers=headers, json={"query": mutation_spin})
-
-                        if response_spin.status_code == 200:
-                            response_current_user_latest = session.post(url, headers=headers, json={"query": query_current_user})
-
-                            if response_current_user_latest.status_code == 200:
-                                latest_total_point = response_current_user_latest.json()['data']['currentUser']['totalPoint']
-                                
-                                print(Fore.GREEN + Style.BRIGHT + f"{i + 1}/{num_iterations} | Name: {user_name} | Total Points: {latest_total_point}" + Style.RESET_ALL)
-
-                    # Tunggu sejenak sebelum iterasi berikutnya (opsional)
-                    time.sleep(3)  # Tunggu 2 detik sebelum iterasi berikutnya
+                # 4️⃣ Logging hasil grow
+                logging.info(f"Account: {account.get('privateKey', 'Unknown')[:6]} | Total Earned: {total_value} | New Deposit Count: {deposit_count} | New Total Points: {total_point}")
 
             except Exception as e:
-                logging.error(f"Error refreshing token for account: {e}")
-                print_error(f"Error refreshing token for account: {e}")
+                logging.error(f"Error processing account {account.get('privateKey', 'Unknown')}: {e}")
 
-        for remaining in range(30, 0, -1):
-            print(Fore.YELLOW + Style.BRIGHT + f"Tunggu {remaining} detik sebelum batch berikutnya..." + Style.RESET_ALL, end="\r")
-            time.sleep(1)
+        # ⏳ Delay 40 menit sebelum siklus berikutnya
+        for remaining in range(CYCLE_DELAY, 0, -10):  # Update setiap 10 detik
+            print(Fore.YELLOW + Style.BRIGHT + f"Tunggu {remaining // 60} menit {remaining % 60} detik sebelum batch berikutnya..." + Style.RESET_ALL, end="\r")
+            time.sleep(10)
 
 if __name__ == "__main__":
-    print_intro()
     main()
