@@ -27,5 +27,8 @@ python3 deposit.py
 ```bash
 python3 growmulti.py
 ```
-
+### Draw Multi Accunt
+```bash
+python3 drawmulti.py
+```
 source code from : https://github.com/dpangestuw/HANA
